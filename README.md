@@ -74,14 +74,24 @@ the maintainer privately rather than in a public issue.
 
 ## Applying the drum-constants patch
 
+The patch changes only the generator code and tests. The checks and the new
+tests read the generated files, so nothing changes until those are rebuilt:
+
 ```bash
 cd drum-constants
 git am ../codata-constants-checks/patches/drum-constants/0001-*.patch
-python nist/repackage.py
-python utils/codata_constants.py --norefresh     # uses the committed workbook
-python utils/package.py
+pip install rdflib openpyxl requests pytest      # generator and test dependencies
+python nist/repackage.py                         # NIST CSVs, now with IsExact/IsTruncated
+python utils/codata_constants.py --norefresh     # uses the committed workbook, not the live Sheet
+python utils/package.py                          # dist/rdf/*
+rm -f nist_ids.csv nist_ids.json                 # stray copies repackage.py writes to the current directory
 python -m pytest tests                           # 23 tests
+codata-constants-checks --repo .
 ```
+
+Without `--norefresh`, `codata_constants.py` downloads the live Google
+Sheet, so the result reflects the Sheet's current state rather than the
+committed workbook.
 
 `codata_constants.py` now logs a warning for every worksheet flag it
 overrides from the NIST source (110 warnings at present). They list exactly
