@@ -1,0 +1,352 @@
+From c0734a0c7a989af3ecf1770e6fa3d230ba9f0354 Mon Sep 17 00:00:00 2001
+From: Lars <lars.barring@smhi.se>
+Date: Tue, 27 Oct 2026 07:43:20 +0000
+Subject: [PATCH] Fix exact/truncated flags and symbol case in labels
+
+- utils/codata_constants.py: cross-check worksheet is_exact/is_truncated
+  against nist/<year>/allascii_<year>.json; NIST wins, with a warning.
+  Fixes 62 CODATA 2022 truncated values emitted as plainly exact, and 48
+  values (16 per release, 1998-2006) that were exact by definition but
+  emitted as isExact false.
+- nist/repackage.py: write IsExact/IsTruncated columns to the repackaged
+  CSV, which previously dropped NIST's '...' marker without recording it.
+- utils/package.py: restore_symbol_case() keeps symbols from the NIST name
+  (u, c, hc, g, HD, HT, kPa, eV s, ...) in the title-cased prefLabel@en.
+- tests: isTruncated/isExact agree with NIST for every release; exact
+  derived 2022 constants are exact or flagged truncated; label symbols.
+
+Regenerate with:
+  python nist/repackage.py
+  python utils/codata_constants.py --norefresh
+  python utils/package.py
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01XHM6qC7Y8rv5syejamGbb9
+---
+ CHANGELOG.md               |  14 +++++
+ nist/repackage.py          |   9 ++-
+ tests/test_rdf_and_docs.py | 118 ++++++++++++++++++++++++++++++++++++-
+ utils/codata_constants.py  |  48 ++++++++++++++-
+ utils/package.py           |  36 ++++++++++-
+ 5 files changed, 219 insertions(+), 6 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index cad8393..8fce93a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
+ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+ 
++## [Unreleased]
++
++### Fixed
++- **Truncation flags (regression in 0.2.0)**: the 62 CODATA 2022 values that NIST publishes as exact-but-truncated (`...`, e.g. `JosephsonConstant`, `MolarGasConstant`, `FaradayConstant`, `VonKlitzingConstant`) were emitted with `codata:isExact true` and no `codata:isTruncated true`. Root cause: the `v2022` worksheet has `is_truncated = False` throughout, consistent with an import from `nist/<year>/allascii_<year>.csv`, which drops NIST's `...` marker without recording it.
++- **Exact flags 1998–2006**: 16 constants per release that were exact by definition at the time (`c`, `mu0`, `ep0`, `z0`, `kj90`, `rk90`, `gn`, `stdatm`, `mu`, `mm12c`, …) were emitted with `codata:isExact false`. Cause: the corresponding worksheet cells.
++- **Symbol case in English labels**: title-casing of `skos:prefLabel@en` no longer alters symbols taken from the NIST name (`In U` → `In u`, `Times C` → `Times c`, `Times Hc` → `Times hc`, `G Factor` → `g Factor`, `In Hd` → `In HD`, `eV S` → `eV s`, `100 KPa` → `100 kPa`; 41 labels).
++
++### Changed
++- `utils/codata_constants.py` cross-checks each worksheet's `is_exact` / `is_truncated` against `nist/<year>/allascii_<year>.json`. On disagreement the NIST value is used and a warning is logged. The worksheets themselves should still be corrected.
++- `nist/repackage.py` writes `IsExact` and `IsTruncated` columns to `allascii_<year>.csv`.
++
++### Added
++- Tests: `isTruncated` and `isExact` agree with the NIST source for every release; the exact derived 2022 constants (R, F, K_J, R_K) are either exactly equal to their defining relation or flagged truncated, and are true truncations; no symbol-case changes in English labels.
++
+ ## [0.2.0] - 2026-10-20
+ 
+ ### Added
+diff --git a/nist/repackage.py b/nist/repackage.py
+index 5b5b267..a3a6dad 100755
+--- a/nist/repackage.py
++++ b/nist/repackage.py
+@@ -298,11 +298,16 @@ def allascii_to_csv(constants: list[PhysicalConstant], filename: str):
+     """
+     Saves list of constants to csv file
+     """
++    # IsExact / IsTruncated are written explicitly: `nist_value` has already had
++    # NIST's '...' truncation marker stripped in PhysicalConstant.__post_init__,
++    # so without these columns anyone loading the CSV (e.g. into the Google
++    # Sheet) silently loses the information that a value is truncated.
+     with open(filename, 'w', newline='') as f:
+         writer = csv.writer(f)
+-        writer.writerow(['Quantity', 'Value', 'Uncertainty', 'Unit'])
++        writer.writerow(['Quantity', 'Value', 'Uncertainty', 'Unit', 'IsExact', 'IsTruncated'])
+         for constant in constants:
+-            writer.writerow([constant.quantity, constant.nist_value, constant.nist_uncertainty, constant.unit])
++            writer.writerow([constant.quantity, constant.nist_value, constant.nist_uncertainty, constant.unit,
++                             constant.is_exact, constant.is_truncated])
+ 
+ def allascii_to_json(constants: list[PhysicalConstant], filename: str):
+     """
+diff --git a/tests/test_rdf_and_docs.py b/tests/test_rdf_and_docs.py
+index 85eed5a..8c95524 100644
+--- a/tests/test_rdf_and_docs.py
++++ b/tests/test_rdf_and_docs.py
+@@ -1,13 +1,21 @@
+ """Automated verification of the CODATA RDF Knowledge Graph and Documentation."""
+ 
++import json
+ import math
+ import re
++import sys
++from decimal import Decimal, getcontext
+ from pathlib import Path
+ import pytest
+ import rdflib
+ from rdflib.namespace import OWL, RDF, SKOS
+ 
+ ROOT_DIR = Path(__file__).resolve().parent.parent
++sys.path.insert(0, str(ROOT_DIR))
++from utils.package import SYMBOL_TOKENS, restore_symbol_case  # noqa: E402
++
++SCHEMA = rdflib.Namespace("https://schema.org/")
++VERSIONS = ["1998", "2002", "2006", "2010", "2014", "2018", "2022"]
+ TTL_PATH = ROOT_DIR / "dist" / "rdf" / "codata_constants.ttl"
+ ONTOLOGY_PATH = ROOT_DIR / "dist" / "rdf" / "codata.ttl"
+ MODEL_DOC_PATH = ROOT_DIR / "docs" / "CODATA_CONSTANTS_MODEL.md"
+@@ -69,7 +77,7 @@ def test_labels_have_language_tags_and_valid_si_casing(graph: rdflib.Graph):
+     # Specifically verify NeutronProtonMassDifferenceInU
+     np_diff = CONSTANT.NeutronProtonMassDifferenceInU
+     np_labels = [str(o) for o in graph.objects(np_diff, SKOS.prefLabel)]
+-    assert "Neutron - Proton Mass Difference In U" in np_labels
++    assert "Neutron - Proton Mass Difference In u" in np_labels
+ 
+ 
+ def test_deprecated_constants_and_2022_coverage(graph: rdflib.Graph):
+@@ -147,3 +155,111 @@ def test_metrological_identities_2022(graph: rdflib.Graph):
+     assert math.isclose(faraday, n_a * e, rel_tol=1e-9)
+     assert math.isclose(hartree, 2.0 * rydberg * h * c, rel_tol=1e-9)
+     assert math.isclose(hartree, (alpha**2) * m_e * (c**2), rel_tol=1e-9)
++
++
++def _nist_id_map(graph: rdflib.Graph) -> dict:
++    """Map NIST short ids (e.g. 'kjos') to DRUM constant IRIs."""
++    out = {}
++    for c in graph.subjects(RDF.type, MODEL.Constant):
++        for pv in graph.objects(c, SCHEMA.identifier):
++            if (pv, SCHEMA.propertyID, rdflib.Literal("NIST")) in graph:
++                out[str(graph.value(pv, SCHEMA.value))] = c
++    return out
++
++
++@pytest.mark.parametrize("year", VERSIONS)
++def test_truncation_flags_match_nist_source(graph: rdflib.Graph, year: str):
++    """codata:isTruncated true must be asserted exactly where NIST marks a value with '...'."""
++    nist_path = ROOT_DIR / "nist" / year / f"allascii_{year}.json"
++    if not nist_path.exists():
++        pytest.skip(f"no NIST source for {year}")
++    idmap = _nist_id_map(graph)
++    missing, spurious = [], []
++    for entry in json.loads(nist_path.read_text(encoding="utf-8")):
++        constant = idmap.get(entry.get("nist_id"))
++        if constant is None:
++            continue
++        value = rdflib.URIRef(f"{constant}/{year}")
++        if (value, RDF.type, MODEL.ConstantValue) not in graph:
++            continue
++        rdf_truncated = (value, MODEL.isTruncated, rdflib.Literal(True)) in graph
++        if entry.get("is_truncated") and not rdf_truncated:
++            missing.append(entry["nist_id"])
++        if rdf_truncated and not entry.get("is_truncated"):
++            spurious.append(entry["nist_id"])
++    assert not missing, f"{year}: NIST truncated but no codata:isTruncated true: {missing}"
++    assert not spurious, f"{year}: codata:isTruncated true but not truncated in NIST: {spurious}"
++
++
++def test_exact_derived_constants_2022_are_flagged_when_truncated(graph: rdflib.Graph):
++    """
++    R, F, K_J and R_K are exact in the 2019 SI but published truncated. A value
++    flagged isExact must either equal the exact relation or be flagged isTruncated,
++    and a truncated value must agree with the exact one to its last digit.
++    """
++    getcontext().prec = 60
++
++    def literal(cid):
++        return graph.value(CONSTANT[f"{cid}/2022"], MODEL.value)
++
++    k, n_a, e, h = (Decimal(str(literal(c))) for c in
++                    ("BoltzmannConstant", "AvogadroConstant", "ElementaryCharge", "PlanckConstant"))
++    exact = {
++        "MolarGasConstant": k * n_a,
++        "FaradayConstant": n_a * e,
++        "JosephsonConstant": 2 * e / h,
++        "VonKlitzingConstant": h / (e * e),
++    }
++    for cid, value_exact in exact.items():
++        node = CONSTANT[f"{cid}/2022"]
++        published = Decimal(str(literal(cid)))
++        assert (node, MODEL.isExact, rdflib.Literal(True)) in graph, f"{cid} should be exact"
++        if published != value_exact:
++            assert (node, MODEL.isTruncated, rdflib.Literal(True)) in graph, (
++                f"{cid}: published {published} differs from exact {value_exact} but is not flagged truncated")
++            # truncation, not rounding to a different value: |diff| < one unit in the last place
++            ulp = Decimal(1).scaleb(published.as_tuple().exponent)
++            assert abs(published - value_exact) < ulp, f"{cid}: {published} is not a truncation of {value_exact}"
++
++
++def test_label_symbols_keep_nist_case(graph: rdflib.Graph):
++    """English prefLabels must not change the case of symbols (u, c, hc, g, HD, eV s, ...) in the NIST name."""
++    bad = []
++    for s in graph.subjects(RDF.type, MODEL.Constant):
++        refs = [str(lbl) for lbl in graph.objects(s, SKOS.altLabel) if lbl.language == "en"]
++        prefs = [str(lbl) for lbl in graph.objects(s, SKOS.prefLabel) if lbl.language == "en"]
++        if refs and prefs and restore_symbol_case(prefs[0], refs[0]) != prefs[0]:
++            bad.append(f"{prefs[0]!r} (NIST: {refs[0]!r})")
++    assert not bad, "Symbol case altered in prefLabel@en:\n" + "\n".join(sorted(bad))
++
++
++def test_restore_symbol_case_examples():
++    assert "hc" in SYMBOL_TOKENS
++    assert restore_symbol_case("Rydberg Constant Times Hc In J", "Rydberg constant times hc in J") == \
++        "Rydberg Constant Times hc In J"
++    assert restore_symbol_case("Shielding Difference Of D And P In Hd", "shielding difference of d and p in HD") == \
++        "Shielding Difference Of d And p In HD"
++    assert restore_symbol_case("Electron G Factor", "electron g factor") == "Electron g Factor"
++    # ordinary words are untouched even if they are short
++    assert restore_symbol_case("Von Klitzing Constant", "Von Klitzing constant") == "Von Klitzing Constant"
++
++
++@pytest.mark.parametrize("year", VERSIONS)
++def test_exact_flags_match_nist_source(graph: rdflib.Graph, year: str):
++    """codata:isExact must agree with NIST ('(exact)' from 2010, no '(nn)' uncertainty before 2010)."""
++    nist_path = ROOT_DIR / "nist" / year / f"allascii_{year}.json"
++    if not nist_path.exists():
++        pytest.skip(f"no NIST source for {year}")
++    idmap = _nist_id_map(graph)
++    wrong = []
++    for entry in json.loads(nist_path.read_text(encoding="utf-8")):
++        constant = idmap.get(entry.get("nist_id"))
++        if constant is None:
++            continue
++        value = rdflib.URIRef(f"{constant}/{year}")
++        if (value, RDF.type, MODEL.ConstantValue) not in graph:
++            continue
++        rdf_exact = (value, MODEL.isExact, rdflib.Literal(True)) in graph
++        if rdf_exact != bool(entry.get("is_exact")):
++            wrong.append(f"{entry['nist_id']} (NIST {entry.get('is_exact')}, RDF {rdf_exact})")
++    assert not wrong, f"{year}: isExact disagrees with NIST for {wrong}"
+diff --git a/utils/codata_constants.py b/utils/codata_constants.py
+index fc99c62..abe1c22 100755
+--- a/utils/codata_constants.py
++++ b/utils/codata_constants.py
+@@ -325,10 +325,54 @@ def parse_workbook(filename):
+                     constant_version['exponent'] = entry.get('exponent')
+                 if entry.get('units'):
+                     constant_version['units'] = entry.get('units')
+-                constant_version['is_exact'] = entry.get('is_exact',False)
+-                constant_version['is_truncated'] = entry.get('is_truncated',False)
++                is_exact, is_truncated = reconcile_nist_flags(
++                    version_id, id, entry.get('is_exact', False), entry.get('is_truncated', False))
++                constant_version['is_exact'] = is_exact
++                constant_version['is_truncated'] = is_truncated
+     return output
+ 
++NIST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nist")
++_nist_flags_cache: dict[str, dict[str, tuple[bool, bool]]] = {}
++
++
++def load_nist_flags(version_id: str) -> dict[str, tuple[bool, bool]]:
++    """
++    Return {nist_id: (is_exact, is_truncated)} parsed by nist/repackage.py from
++    NIST's allascii_<year>.txt, which is the authoritative source for both flags.
++    Returns an empty dict if the NIST file for that year is not available.
++    """
++    if version_id not in _nist_flags_cache:
++        path = os.path.join(NIST_DIR, version_id, f"allascii_{version_id}.json")
++        flags = {}
++        if os.path.isfile(path):
++            with open(path, 'r', encoding='utf-8') as f:
++                for e in json.load(f):
++                    if e.get('nist_id'):
++                        flags[e['nist_id']] = (bool(e.get('is_exact')), bool(e.get('is_truncated')))
++        else:
++            logging.warning(f"No NIST source file {path}; is_exact/is_truncated taken from the sheet unchecked")
++        _nist_flags_cache[version_id] = flags
++    return _nist_flags_cache[version_id]
++
++
++def reconcile_nist_flags(version_id: str, nist_id: str, sheet_exact, sheet_truncated) -> tuple[bool, bool]:
++    """
++    Cross-check the sheet's is_exact / is_truncated against the NIST source.
++
++    The NIST file wins on disagreement and a warning is logged, so that a sheet
++    edit (or an import from a CSV that dropped the '...' marker) cannot silently
++    turn a truncated value into one presented as exact.
++    """
++    sheet = (bool(sheet_exact), bool(sheet_truncated))
++    nist = load_nist_flags(version_id).get(nist_id)
++    if nist is None or nist == sheet:
++        return sheet
++    logging.warning(
++        f"v{version_id} {nist_id}: sheet has is_exact={sheet[0]}, is_truncated={sheet[1]}; "
++        f"NIST source has is_exact={nist[0]}, is_truncated={nist[1]}. Using NIST values.")
++    return nist
++
++
+ def main(norefresh: bool = False):
+     current_dir = os.path.dirname(os.path.abspath(__file__))
+     sheet_filename = os.path.join(current_dir, "codata_constants.xlsx")
+diff --git a/utils/package.py b/utils/package.py
+index 109b118..9f74fd6 100755
+--- a/utils/package.py
++++ b/utils/package.py
+@@ -26,6 +26,7 @@ import json
+ import json.encoder
+ import logging
+ import os
++import re
+ from decimal import Decimal, InvalidOperation
+ from functools import lru_cache
+ from urllib.parse import quote
+@@ -394,6 +395,38 @@ def generate_rdf_conceptual_properties(resource_uriref: URIRef, data: dict, conc
+             g.add((resource_uriref, SKOS.exactMatch , URIRef(WIKIDATA[value])))
+     return g
+ 
++# Case-sensitive symbols that occur in NIST quantity names. Title-casing the
++# curated English label must not alter them: "in u" (unified atomic mass unit)
++# is not "In U", "times c" is not "Times C", "g factor" is not "G Factor",
++# "in HD" (hydrogen deuteride) is not "In Hd", "eV s" is not "eV S".
++SYMBOL_TOKENS = frozenset({
++    # unit symbols
++    "u", "s", "m", "g", "K", "J", "T", "W", "Hz", "MHz", "GHz", "Pa", "kPa",
++    "eV", "keV", "MeV", "GeV", "fm", "kg", "mol",
++    # quantity / particle / molecule symbols
++    "c", "h", "hc", "bar", "pi", "d", "p", "t", "x", "Z", "HD", "HT", "Cs", "Si",
++})
++
++
++def restore_symbol_case(label: str, reference: str | None) -> str:
++    """
++    Return `label` with every symbol from SYMBOL_TOKENS that occurs in
++    `reference` (the NIST-style name) restored to the reference's case.
++
++    Only whole alphabetic tokens are touched, and only tokens that are symbols
++    in the reference, so ordinary title-cased words are left as they are:
++        restore_symbol_case("Rydberg Constant Times Hc In J",
++                            "Rydberg constant times hc in J")
++        -> "Rydberg Constant Times hc In J"
++    """
++    if not label or not reference:
++        return label
++    symbols = {t.lower(): t for t in re.findall(r"[A-Za-z]+", reference) if t in SYMBOL_TOKENS}
++    if not symbols:
++        return label
++    return re.sub(r"[A-Za-z]+", lambda m: symbols.get(m.group(0).lower(), m.group(0)), label)
++
++
+ def generate_rdf_constant(constant_uriref: URIRef, data: dict, latest_version_id: str = "2022") -> Graph:
+     """
+     Generates an RDF representation for a specific physical constant.
+@@ -416,7 +449,8 @@ def generate_rdf_constant(constant_uriref: URIRef, data: dict, latest_version_id
+ 
+     # label
+     if data.get('name'):
+-        g.add((constant_uriref, SKOS.prefLabel, Literal(data.get('name'), lang="en")))
++        name_en = restore_symbol_case(data.get('name'), data.get('name_bipm_en'))
++        g.add((constant_uriref, SKOS.prefLabel, Literal(name_en, lang="en")))
+     if data.get('name_fr'):
+         g.add((constant_uriref, SKOS.prefLabel, Literal(data.get('name_fr'), lang="fr")))
+     if data.get('name_bipm_en'):
+-- 
+2.43.0
+
