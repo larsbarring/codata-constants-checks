@@ -1,0 +1,245 @@
+From bf377c051f09254e5a6581349f91759430f54399 Mon Sep 17 00:00:00 2001
+From: Lars <lars.barring@smhi.se>
+Date: Tue, 27 Oct 2026 20:50:09 +0000
+Subject: [PATCH] Take symbol case from NIST names; test exactness against SI
+ history
+
+- utils/package.py: restore_symbol_case() now uses NIST's own quantity
+  names for the constant, from all releases (nist_quantity_names()),
+  instead of the curated name_bipm_en column, which differs from NIST for
+  118 of 357 constants. A token occurring in more than one case is left
+  unchanged. The generated RDF is unchanged.
+- tests: label check compares against NIST names; new test that the
+  exactness of c, mu0, eps0, Z0, M_u, M(12C), h, e, k and N_A follows the
+  SI definitions in force for each release (independent of NIST's
+  formatting and of nist/repackage.py).
+- utils/codata_constants.py: the NIST override is marked temporary.
+- CHANGELOG: updated accordingly.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01XHM6qC7Y8rv5syejamGbb9
+---
+ CHANGELOG.md               |  6 ++--
+ tests/test_rdf_and_docs.py | 63 ++++++++++++++++++++++++++++++++++----
+ utils/codata_constants.py  |  7 ++++-
+ utils/package.py           | 57 +++++++++++++++++++++++++++++-----
+ 4 files changed, 115 insertions(+), 18 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 8fce93a..0960015 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -10,14 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ ### Fixed
+ - **Truncation flags (regression in 0.2.0)**: the 62 CODATA 2022 values that NIST publishes as exact-but-truncated (`...`, e.g. `JosephsonConstant`, `MolarGasConstant`, `FaradayConstant`, `VonKlitzingConstant`) were emitted with `codata:isExact true` and no `codata:isTruncated true`. Root cause: the `v2022` worksheet has `is_truncated = False` throughout, consistent with an import from `nist/<year>/allascii_<year>.csv`, which drops NIST's `...` marker without recording it.
+ - **Exact flags 1998–2006**: 16 constants per release that were exact by definition at the time (`c`, `mu0`, `ep0`, `z0`, `kj90`, `rk90`, `gn`, `stdatm`, `mu`, `mm12c`, …) were emitted with `codata:isExact false`. Cause: the corresponding worksheet cells.
+-- **Symbol case in English labels**: title-casing of `skos:prefLabel@en` no longer alters symbols taken from the NIST name (`In U` → `In u`, `Times C` → `Times c`, `Times Hc` → `Times hc`, `G Factor` → `g Factor`, `In Hd` → `In HD`, `eV S` → `eV s`, `100 KPa` → `100 kPa`; 41 labels).
++- **Symbol case in English labels**: title-casing of `skos:prefLabel@en` no longer alters symbols taken from the NIST name (`In U` → `In u`, `Times C` → `Times c`, `Times Hc` → `Times hc`, `G Factor` → `g Factor`, `In Hd` → `In HD`, `eV S` → `eV s`, `100 KPa` → `100 kPa`; 41 labels). The case of each symbol is taken from NIST's quantity names (all releases), not from title-casing rules, so e.g. a coulomb `C` is never lowercased.
+ 
+ ### Changed
+-- `utils/codata_constants.py` cross-checks each worksheet's `is_exact` / `is_truncated` against `nist/<year>/allascii_<year>.json`. On disagreement the NIST value is used and a warning is logged. The worksheets themselves should still be corrected.
++- `utils/codata_constants.py` cross-checks each worksheet's `is_exact` / `is_truncated` against `nist/<year>/allascii_<year>.json`. On disagreement the NIST value is used and a warning is logged. This override is a temporary safeguard: the worksheets must still be corrected, after which a disagreement should be treated as an error. Note that the NIST JSON is produced by `nist/repackage.py`, so this cross-check is not independent of that parser; the SI-history test below is.
+ - `nist/repackage.py` writes `IsExact` and `IsTruncated` columns to `allascii_<year>.csv`.
+ 
+ ### Added
+-- Tests: `isTruncated` and `isExact` agree with the NIST source for every release; the exact derived 2022 constants (R, F, K_J, R_K) are either exactly equal to their defining relation or flagged truncated, and are true truncations; no symbol-case changes in English labels.
++- Tests: `isTruncated` and `isExact` agree with the NIST source for every release; the exact derived 2022 constants (R, F, K_J, R_K) are either exactly equal to their defining relation or flagged truncated, and are true truncations; no symbol-case changes in English labels relative to NIST's names; exactness of c, μ0, ε0, Z0, M_u, M(¹²C), h, e, k and N_A follows the SI definitions in force for each release (fixed in the test, independent of NIST's formatting).
+ 
+ ## [0.2.0] - 2026-10-20
+ 
+diff --git a/tests/test_rdf_and_docs.py b/tests/test_rdf_and_docs.py
+index 8c95524..e8055f5 100644
+--- a/tests/test_rdf_and_docs.py
++++ b/tests/test_rdf_and_docs.py
+@@ -12,7 +12,7 @@ from rdflib.namespace import OWL, RDF, SKOS
+ 
+ ROOT_DIR = Path(__file__).resolve().parent.parent
+ sys.path.insert(0, str(ROOT_DIR))
+-from utils.package import SYMBOL_TOKENS, restore_symbol_case  # noqa: E402
++from utils.package import SYMBOL_TOKENS, nist_quantity_names, restore_symbol_case  # noqa: E402
+ 
+ SCHEMA = rdflib.Namespace("https://schema.org/")
+ VERSIONS = ["1998", "2002", "2006", "2010", "2014", "2018", "2022"]
+@@ -224,12 +224,18 @@ def test_exact_derived_constants_2022_are_flagged_when_truncated(graph: rdflib.G
+ 
+ def test_label_symbols_keep_nist_case(graph: rdflib.Graph):
+     """English prefLabels must not change the case of symbols (u, c, hc, g, HD, eV s, ...) in the NIST name."""
+-    bad = []
+-    for s in graph.subjects(RDF.type, MODEL.Constant):
+-        refs = [str(lbl) for lbl in graph.objects(s, SKOS.altLabel) if lbl.language == "en"]
++    names = nist_quantity_names()
++    idmap = _nist_id_map(graph)
++    bad, compared = [], 0
++    for nist_id, s in idmap.items():
++        refs = names.get(nist_id, ())
+         prefs = [str(lbl) for lbl in graph.objects(s, SKOS.prefLabel) if lbl.language == "en"]
+-        if refs and prefs and restore_symbol_case(prefs[0], refs[0]) != prefs[0]:
+-            bad.append(f"{prefs[0]!r} (NIST: {refs[0]!r})")
++        if not refs or not prefs:
++            continue
++        compared += 1
++        if restore_symbol_case(prefs[0], refs) != prefs[0]:
++            bad.append(f"{prefs[0]!r} (NIST: {' / '.join(refs)!r})")
++    assert compared > 300, f"only {compared} labels could be compared with NIST names"
+     assert not bad, "Symbol case altered in prefLabel@en:\n" + "\n".join(sorted(bad))
+ 
+ 
+@@ -263,3 +269,48 @@ def test_exact_flags_match_nist_source(graph: rdflib.Graph, year: str):
+         if rdf_exact != bool(entry.get("is_exact")):
+             wrong.append(f"{entry['nist_id']} (NIST {entry.get('is_exact')}, RDF {rdf_exact})")
+     assert not wrong, f"{year}: isExact disagrees with NIST for {wrong}"
++
++
++# Exactness fixed by the SI definitions in force for each adjustment, stated
++# independently of NIST's table formatting. Up to CODATA 2014 the SI fixed c,
++# mu0 (ampere, 1948) and M(12C) (mole), and therefore eps0, Z0 and M_u. CODATA
++# 2018 is the first adjustment in the revised SI (in force 20 May 2019), which
++# fixes h, e, k and N_A, while mu0, eps0, Z0, M_u and M(12C) become measured.
++SI_EXACTNESS = {
++    # constant id: (exact up to 2014, exact from 2018)
++    "SpeedOfLight": (True, True),
++    "ElectromagneticPermeabilityOfVacuum": (True, False),
++    "PermittivityOfVacuum": (True, False),
++    "CharacteristicImpedanceOfVacuum": (True, False),
++    "MolarMassConstant": (True, False),
++    "MolarMassOfCarbon12": (True, False),
++    "PlanckConstant": (False, True),
++    "ElementaryCharge": (False, True),
++    "BoltzmannConstant": (False, True),
++    "AvogadroConstant": (False, True),
++}
++
++
++@pytest.mark.parametrize("cid", sorted(SI_EXACTNESS))
++def test_exactness_follows_si_definitions(graph: rdflib.Graph, cid: str):
++    before_2019, from_2019 = SI_EXACTNESS[cid]
++    checked = []
++    for year in VERSIONS:
++        node = CONSTANT[f"{cid}/{year}"]
++        if (node, RDF.type, MODEL.ConstantValue) not in graph:
++            continue
++        expected = before_2019 if int(year) <= 2014 else from_2019
++        actual = (node, MODEL.isExact, rdflib.Literal(True)) in graph
++        assert actual == expected, f"{cid}/{year}: isExact {actual}, expected {expected} under the SI of that release"
++        checked.append(year)
++    assert "2014" in checked and "2018" in checked, f"{cid}: values for 2014 and 2018 expected, found {checked}"
++
++
++def test_restore_symbol_case_with_several_or_ambiguous_references():
++    # NIST renamed the quantity between releases; symbols from any name count
++    assert restore_symbol_case("Electron Gyromagnetic Ratio Over 2 Pi",
++                               ("electron gyromag. ratio over 2 pi", "electron gyromag. ratio in MHz/T")) == \
++        "Electron Gyromagnetic Ratio Over 2 pi"
++    # a token appearing in two cases is ambiguous and left alone
++    assert restore_symbol_case("Thing In T", ("thing in t",)) == "Thing In t"          # control
++    assert restore_symbol_case("Thing In T", ("thing in t", "thing in T")) == "Thing In T"
+diff --git a/utils/codata_constants.py b/utils/codata_constants.py
+index abe1c22..223bdb1 100755
+--- a/utils/codata_constants.py
++++ b/utils/codata_constants.py
+@@ -362,6 +362,10 @@ def reconcile_nist_flags(version_id: str, nist_id: str, sheet_exact, sheet_trunc
+     The NIST file wins on disagreement and a warning is logged, so that a sheet
+     edit (or an import from a CSV that dropped the '...' marker) cannot silently
+     turn a truncated value into one presented as exact.
++
++    TEMPORARY: this override exists until the worksheet cells listed in the
++    warnings are corrected. After that, a disagreement indicates a new error
++    and should fail the build instead of being silently repaired.
+     """
+     sheet = (bool(sheet_exact), bool(sheet_truncated))
+     nist = load_nist_flags(version_id).get(nist_id)
+@@ -369,7 +373,8 @@ def reconcile_nist_flags(version_id: str, nist_id: str, sheet_exact, sheet_trunc
+         return sheet
+     logging.warning(
+         f"v{version_id} {nist_id}: sheet has is_exact={sheet[0]}, is_truncated={sheet[1]}; "
+-        f"NIST source has is_exact={nist[0]}, is_truncated={nist[1]}. Using NIST values.")
++        f"NIST source has is_exact={nist[0]}, is_truncated={nist[1]}. Using NIST values "
++        f"(temporary override; correct the worksheet cell).")
+     return nist
+ 
+ 
+diff --git a/utils/package.py b/utils/package.py
+index 9f74fd6..d4d7365 100755
+--- a/utils/package.py
++++ b/utils/package.py
+@@ -408,20 +408,57 @@ SYMBOL_TOKENS = frozenset({
+ })
+ 
+ 
+-def restore_symbol_case(label: str, reference: str | None) -> str:
++NIST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nist")
++
++
++@lru_cache(maxsize=None)
++def nist_quantity_names() -> dict:
++    """
++    Return {nist_id: tuple of NIST quantity names}, collected from every
++    nist/<year>/allascii_<year>.json. NIST renames some quantities between
++    releases (e.g. "electron gyromag. ratio over 2 pi" became "... in MHz/T"
++    in 2022), so all names of an id are kept.
+     """
+-    Return `label` with every symbol from SYMBOL_TOKENS that occurs in
+-    `reference` (the NIST-style name) restored to the reference's case.
++    names: dict = {}
++    if not os.path.isdir(NIST_DIR):
++        return names
++    for year in sorted(os.listdir(NIST_DIR)):
++        path = os.path.join(NIST_DIR, year, f"allascii_{year}.json")
++        if not os.path.isfile(path):
++            continue
++        with open(path, "r", encoding="utf-8") as f:
++            for entry in json.load(f):
++                nist_id, quantity = entry.get("nist_id"), entry.get("quantity")
++                if nist_id and quantity and quantity not in names.get(nist_id, ()):
++                    names[nist_id] = names.get(nist_id, ()) + (quantity,)
++    return names
++
+ 
+-    Only whole alphabetic tokens are touched, and only tokens that are symbols
+-    in the reference, so ordinary title-cased words are left as they are:
++def restore_symbol_case(label: str, references) -> str:
++    """
++    Return `label` with every symbol from SYMBOL_TOKENS that occurs in the
++    reference name(s) restored to the case used there.
++
++    `references` is one NIST quantity name or an iterable of them (all NIST
++    names of the constant). Only whole alphabetic tokens are touched, and only
++    tokens that are symbols in a reference, so ordinary title-cased words are
++    left as they are, and a token such as "C" is lowercased only where the
++    NIST name has "c". A token that occurs in the references in more than one
++    case is ambiguous and left unchanged.
+         restore_symbol_case("Rydberg Constant Times Hc In J",
+                             "Rydberg constant times hc in J")
+         -> "Rydberg Constant Times hc In J"
+     """
+-    if not label or not reference:
++    if not label or not references:
+         return label
+-    symbols = {t.lower(): t for t in re.findall(r"[A-Za-z]+", reference) if t in SYMBOL_TOKENS}
++    if isinstance(references, str):
++        references = (references,)
++    seen: dict = {}
++    for ref in references:
++        for t in re.findall(r"[A-Za-z]+", ref or ""):
++            if t in SYMBOL_TOKENS:
++                seen.setdefault(t.lower(), set()).add(t)
++    symbols = {k: next(iter(v)) for k, v in seen.items() if len(v) == 1}
+     if not symbols:
+         return label
+     return re.sub(r"[A-Za-z]+", lambda m: symbols.get(m.group(0).lower(), m.group(0)), label)
+@@ -449,7 +486,11 @@ def generate_rdf_constant(constant_uriref: URIRef, data: dict, latest_version_id
+ 
+     # label
+     if data.get('name'):
+-        name_en = restore_symbol_case(data.get('name'), data.get('name_bipm_en'))
++        # Symbol case is taken from NIST's own quantity names, not from the
++        # curated name_bipm_en column, which differs from NIST for about a
++        # third of the constants (spacing, expanded abbreviations, "Von"/"von").
++        nist_id = data.get('ids', {}).get('NIST')
++        name_en = restore_symbol_case(data.get('name'), nist_quantity_names().get(nist_id, ()))
+         g.add((constant_uriref, SKOS.prefLabel, Literal(name_en, lang="en")))
+     if data.get('name_fr'):
+         g.add((constant_uriref, SKOS.prefLabel, Literal(data.get('name_fr'), lang="fr")))
+-- 
+2.43.0
+

@@ -51,7 +51,8 @@ def value_as_decimal(s):
 
 
 def make_repo(tmp_path: Path, *, r_truncated=None, r_exact=True,
-              label="Rydberg Constant Times c In Hz", alt="Rydberg constant times c in Hz") -> Path:
+              label="Rydberg Constant Times c In Hz", alt="Rydberg constant times c in Hz",
+              nist_name="Rydberg constant times c in Hz") -> Path:
     ttl = PREFIXES
     ttl += constant_ttl("BoltzmannConstant", "k", "1.380649e-23", True)
     ttl += constant_ttl("AvogadroConstant", "na", "6.02214076e23", True)
@@ -70,7 +71,7 @@ def make_repo(tmp_path: Path, *, r_truncated=None, r_exact=True,
         {"nist_id": "e", "is_exact": True, "is_truncated": False},
         {"nist_id": "h", "is_exact": True, "is_truncated": False},
         {"nist_id": "r", "is_exact": True, "is_truncated": True},
-        {"nist_id": "rydchz", "is_exact": False, "is_truncated": False},
+        {"nist_id": "rydchz", "is_exact": False, "is_truncated": False, "quantity": nist_name},
     ]
     nd = tmp_path / "nist" / "2022"
     nd.mkdir(parents=True)
@@ -121,8 +122,8 @@ def test_exit_code(tmp_path):
 
 
 def test_label_check_skips_when_nothing_to_compare(tmp_path):
-    """Data without English altLabels (pre-0.2.0) must not PASS vacuously."""
-    res = run(make_repo(tmp_path, r_truncated=True, label="Rydberg Constant Times C In Hz", alt=None))
+    """Without NIST quantity names to compare against, D5 must not PASS vacuously."""
+    res = run(make_repo(tmp_path, r_truncated=True, label="Rydberg Constant Times C In Hz", nist_name=None))
     assert res["D5"].status == "SKIP"
 
 
@@ -135,3 +136,25 @@ def test_report_names_the_checked_repo(tmp_path, capsys):
     repo = make_repo(tmp_path, r_truncated=True)
     checks.main(["--repo", str(repo)])
     assert capsys.readouterr().out.startswith(f"drum-constants: {repo} (not a git checkout)")
+
+
+def test_label_reference_is_nist_name_not_altlabel(tmp_path):
+    """The altLabel may differ from NIST; the NIST quantity name decides."""
+    res = run(make_repo(tmp_path, r_truncated=True, label="Rydberg Constant Times C In Hz",
+                        alt="Rydberg Constant Times C In Hz"))
+    assert res["D5"].status == "FAIL"
+
+
+def test_ambiguous_symbol_case_is_not_checked(tmp_path):
+    """'t' and 'T' are both symbols; if NIST uses both for the same id, the token is not checked."""
+    label = "Rydberg Constant Times c In T"
+    control = run(make_repo(tmp_path / "a", r_truncated=True, label=label,
+                            nist_name="Rydberg constant times c in t"))
+    assert control["D5"].status == "FAIL"
+    repo = make_repo(tmp_path / "b", r_truncated=True, label=label, nist_name="Rydberg constant times c in t")
+    extra = repo / "nist" / "2018"
+    extra.mkdir(parents=True)
+    (extra / "allascii_2018.json").write_text(json.dumps(
+        [{"nist_id": "rydchz", "is_exact": False, "is_truncated": False,
+          "quantity": "Rydberg constant times c in T"}]), encoding="utf-8")
+    assert run(repo)["D5"].status == "PASS"

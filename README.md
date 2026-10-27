@@ -14,7 +14,7 @@ Reviewed versions: drum-constants 0.2.0 (`9f13b1b`) and drum-constants-api 0.4.0
 | Path | What |
 |---|---|
 | `src/codata_constants_checks/checks.py` | `codata-constants-checks`: one check per review finding, run against a drum-constants clone and optionally a running API |
-| `patches/drum-constants/0001-*.patch` | Fix for the exact/truncated flags and symbol case in labels, with tests |
+| `patches/drum-constants/0001-*.patch`, `0002-*.patch` | Fix for the exact/truncated flags and symbol case in labels (0001); symbol case taken from NIST's names and a test of exactness against the SI history (0002) |
 | `tests/` | Tests for the checks, using a small synthetic repository |
 | `wip/correlations/` | Stage 3 prototype (correlation coefficients as RDF). Not packaged, not finished |
 
@@ -55,7 +55,7 @@ unpatched API 0.4.0 run locally.
 | D2 | NIST CSV export and Sheet snapshot keep the truncation marker | FAIL: repackaged CSVs drop it; `v2022` sheet has 0 of 62 | FAIL: `v2022` sheet still wrong (fix in the Sheet) |
 | D3 | 2022 exact derived constants (R, F, K_J, R_K) are flagged truncated where truncated | FAIL: 4 | PASS |
 | D4 | Deprecated constants were last published in 2018 | FAIL: 2 last in 2006, 2 last in 2014 | FAIL (modelling/wording issue, not patched) |
-| D5 | Symbols keep their case in English `prefLabel` | FAIL: 41 labels (`In U`, `Times C`, `G Factor`, `In Hd`, `100 KPa`, …) | PASS |
+| D5 | Symbols keep their case in English `prefLabel`, relative to NIST's quantity names | FAIL: 41 of 357 labels (`In U`, `Times C`, `G Factor`, `In Hd`, `100 KPa`, …) | PASS |
 | D6 | Correlation coefficients exposed in RDF | FAIL: 0 triples, 6 NIST files unused | FAIL (stage 3) |
 | D7 | Sheet snapshot matches published labels | WARN: 1 | WARN: 41 (labels now corrected in code; fix the Sheet) |
 | D8 | `valueDecimal` equals `value` numerically | PASS | PASS |
@@ -79,13 +79,13 @@ tests read the generated files, so nothing changes until those are rebuilt:
 
 ```bash
 cd drum-constants
-git am ../codata-constants-checks/patches/drum-constants/0001-*.patch
+git am ../codata-constants-checks/patches/drum-constants/000[12]-*.patch
 pip install rdflib openpyxl requests pytest      # generator and test dependencies
 python nist/repackage.py                         # NIST CSVs, now with IsExact/IsTruncated
 python utils/codata_constants.py --norefresh     # uses the committed workbook, not the live Sheet
 python utils/package.py                          # dist/rdf/*
 rm -f nist_ids.csv nist_ids.json                 # stray copies repackage.py writes to the current directory
-python -m pytest tests                           # 23 tests
+python -m pytest tests                           # 34 tests
 codata-constants-checks --repo .
 ```
 

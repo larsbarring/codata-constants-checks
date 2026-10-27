@@ -294,27 +294,50 @@ def check_exact_flags(g, repo, idmap):
            f"{failures} disagreements between RDF and NIST source", details)
 
 
-def check_label_symbol_case(g):
-    """D5: symbols in the NIST name (u, c, hc, g, HD, kPa, ...) must keep their case in prefLabel@en."""
-    syms = SYMBOLS
+def nist_names(repo) -> dict[str, tuple[str, ...]]:
+    """{nist_id: all NIST quantity names of that id, over all releases}."""
+    names: dict[str, tuple[str, ...]] = {}
+    for year in VERSIONS:
+        for e in load_nist_json(repo, year):
+            i, q = e.get("nist_id"), e.get("quantity")
+            if i and q and q not in names.get(i, ()):
+                names[i] = names.get(i, ()) + (q,)
+    return names
+
+
+def check_label_symbol_case(g, repo, idmap):
+    """D5: symbols in the NIST name (u, c, hc, g, HD, kPa, ...) must keep their case in prefLabel@en.
+
+    The reference is NIST's own quantity name(s) for the constant, over all
+    releases. A symbol occurring there in more than one case is ambiguous and
+    not checked.
+    """
+    names = nist_names(repo)
     details, compared = [], 0
-    for c in sorted(g.subjects(RDF.type, MODEL.Constant)):
-        ref = [str(l) for l in g.objects(c, SKOS.altLabel) if l.language == "en"]
+    for nist_id, c in sorted(idmap.items(), key=lambda kv: str(kv[1])):
+        refs = names.get(nist_id, ())
         pref = [str(l) for l in g.objects(c, SKOS.prefLabel) if l.language == "en"]
-        if not ref or not pref:
+        if not refs or not pref:
             continue
         compared += 1
-        ref_toks = re.findall(r"[A-Za-z]+", ref[0])
+        cases: dict[str, set[str]] = {}
+        for ref in refs:
+            for t in re.findall(r"[A-Za-z]+", ref):
+                if t in SYMBOLS:
+                    cases.setdefault(t.lower(), set()).add(t)
+        expected = {k: next(iter(v)) for k, v in cases.items() if len(v) == 1}
         pref_toks = re.findall(r"[A-Za-z]+", pref[0])
-        pref_lower = {t.lower(): t for t in pref_toks}
-        bad = [f"'{t}'->'{pref_lower[t.lower()]}'" for t in ref_toks
-               if t in syms and t not in pref_toks and t.lower() in pref_lower]
+        bad = []
+        for t in pref_toks:
+            want = expected.get(t.lower())
+            if want and t != want and f"'{want}'->'{t}'" not in bad:
+                bad.append(f"'{want}'->'{t}'")
         if bad:
-            details.append(f"{short(c)}: \"{pref[0]}\" (NIST: \"{ref[0]}\"): {', '.join(bad)}")
+            details.append(f"{short(c)}: \"{pref[0]}\" (NIST: \"{' / '.join(refs)}\"): {', '.join(bad)}")
     if not compared:
         record("D5", "Unit/physics symbols keep their case in English prefLabel", "SKIP",
-               "no constant has both prefLabel@en and altLabel@en to compare "
-               "(labels without language tags?)")
+               "no constant has both prefLabel@en and a NIST quantity name to compare "
+               "(labels without language tags, or no nist/<year>/allascii_<year>.json?)")
         return
     record("D5", "Unit/physics symbols keep their case in English prefLabel",
            "FAIL" if details else "PASS",
@@ -523,7 +546,7 @@ def main(argv=None):
     check_csv_root_cause(args.repo)
     check_exact_relations(g)
     check_deprecation(g, args.repo)
-    check_label_symbol_case(g)
+    check_label_symbol_case(g, args.repo, idmap)
     check_correlations(g, args.repo)
     check_snapshot_consistency(g, args.repo)
     check_decimal_literals(g)
