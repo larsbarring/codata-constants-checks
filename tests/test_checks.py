@@ -51,7 +51,7 @@ def value_as_decimal(s):
 
 
 def make_repo(tmp_path: Path, *, r_truncated=None, r_exact=True,
-              label="Rydberg Constant Times c In Hz") -> Path:
+              label="Rydberg Constant Times c In Hz", alt="Rydberg constant times c in Hz") -> Path:
     ttl = PREFIXES
     ttl += constant_ttl("BoltzmannConstant", "k", "1.380649e-23", True)
     ttl += constant_ttl("AvogadroConstant", "na", "6.02214076e23", True)
@@ -59,7 +59,7 @@ def make_repo(tmp_path: Path, *, r_truncated=None, r_exact=True,
     ttl += constant_ttl("PlanckConstant", "h", "6.62607015e-34", True)
     ttl += constant_ttl("MolarGasConstant", "r", "8.314462618", r_exact, r_truncated)
     ttl += constant_ttl("RydbergConstantTimesCInHz", "rydchz", "3.2898419602508e15", False,
-                        pref=label, alt="Rydberg constant times c in Hz")
+                        pref=label, alt=alt)
     rdf = tmp_path / "dist" / "rdf"
     rdf.mkdir(parents=True)
     (rdf / "codata_constants.ttl").write_text(ttl, encoding="utf-8")
@@ -118,3 +118,20 @@ def test_decimal_literals_agree(tmp_path):
 
 def test_exit_code(tmp_path):
     assert checks.main(["--repo", str(make_repo(tmp_path / "bad", r_truncated=None))]) == 1
+
+
+def test_label_check_skips_when_nothing_to_compare(tmp_path):
+    """Data without English altLabels (pre-0.2.0) must not PASS vacuously."""
+    res = run(make_repo(tmp_path, r_truncated=True, label="Rydberg Constant Times C In Hz", alt=None))
+    assert res["D5"].status == "SKIP"
+
+
+def test_deprecation_check_skips_without_deprecated_constants(tmp_path):
+    res = run(make_repo(tmp_path, r_truncated=True))
+    assert res["D4"].status == "SKIP"
+
+
+def test_report_names_the_checked_repo(tmp_path, capsys):
+    repo = make_repo(tmp_path, r_truncated=True)
+    checks.main(["--repo", str(repo)])
+    assert capsys.readouterr().out.startswith(f"drum-constants: {repo} (not a git checkout)")

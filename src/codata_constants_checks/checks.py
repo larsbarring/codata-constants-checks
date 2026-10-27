@@ -34,6 +34,7 @@ import argparse
 import csv
 import json
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -234,9 +235,16 @@ def check_deprecation(g, repo):
     """D4: when were the owl:deprecated constants last published?"""
     details, wrong = [], 0
     nist_by_year = {y: {e.get("nist_id") for e in load_nist_json(repo, y)} for y in VERSIONS}
-    for c in sorted(g.subjects(OWL.deprecated, rdflib.Literal(True))):
-        if (c, RDF.type, MODEL.Constant) not in g:
-            continue
+    deprecated = [c for c in sorted(g.subjects(OWL.deprecated, rdflib.Literal(True)))
+                  if (c, RDF.type, MODEL.Constant) in g]
+    if not deprecated:
+        no_latest = [short(c) for c in g.subjects(RDF.type, MODEL.Constant)
+                     if (value_node(c, LATEST), RDF.type, MODEL.ConstantValue) not in g]
+        record("D4", "Deprecated constants were last published in 2018", "SKIP",
+               f"no constant is flagged owl:deprecated; {len(no_latest)} constants have no "
+               f"{LATEST} value", sorted(no_latest)[:10])
+        return
+    for c in deprecated:
         years = sorted(str(g.value(v, MODEL.versionId)) for v in g.objects(c, MODEL.hasValue))
         nist_ids = [str(g.value(pv, SCHEMA.value)) for pv in g.objects(c, SCHEMA.identifier)
                     if (pv, SCHEMA.propertyID, rdflib.Literal("NIST")) in g]
@@ -289,12 +297,13 @@ def check_exact_flags(g, repo, idmap):
 def check_label_symbol_case(g):
     """D5: symbols in the NIST name (u, c, hc, g, HD, kPa, ...) must keep their case in prefLabel@en."""
     syms = SYMBOLS
-    details = []
+    details, compared = [], 0
     for c in sorted(g.subjects(RDF.type, MODEL.Constant)):
         ref = [str(l) for l in g.objects(c, SKOS.altLabel) if l.language == "en"]
         pref = [str(l) for l in g.objects(c, SKOS.prefLabel) if l.language == "en"]
         if not ref or not pref:
             continue
+        compared += 1
         ref_toks = re.findall(r"[A-Za-z]+", ref[0])
         pref_toks = re.findall(r"[A-Za-z]+", pref[0])
         pref_lower = {t.lower(): t for t in pref_toks}
@@ -302,9 +311,14 @@ def check_label_symbol_case(g):
                if t in syms and t not in pref_toks and t.lower() in pref_lower]
         if bad:
             details.append(f"{short(c)}: \"{pref[0]}\" (NIST: \"{ref[0]}\"): {', '.join(bad)}")
+    if not compared:
+        record("D5", "Unit/physics symbols keep their case in English prefLabel", "SKIP",
+               "no constant has both prefLabel@en and altLabel@en to compare "
+               "(labels without language tags?)")
+        return
     record("D5", "Unit/physics symbols keep their case in English prefLabel",
            "FAIL" if details else "PASS",
-           f"{len(details)} labels change the case of a symbol", details)
+           f"{len(details)} of {compared} labels change the case of a symbol", details)
 
 
 def check_correlations(g, repo):
@@ -469,7 +483,19 @@ def check_api(base, probe_service):
 # Main
 # --------------------------------------------------------------------------
 
-def print_report():
+def describe_repo(repo: Path) -> str:
+    """Identify what was checked: git commit and date if available, else the path."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "log", "-1", "--format=%h %cs %s"],
+            capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+        return f"{repo} @ {out}"
+    except (OSError, subprocess.SubprocessError):
+        return f"{repo} (not a git checkout)"
+
+
+def print_report(repo_info: str):
+    print(f"drum-constants: {repo_info}\n")
     width = max(len(r.title) for r in RESULTS)
     for r in RESULTS:
         print(f"[{r.status:4}] {r.check_id:3} {r.title:<{width}}  {r.summary}")
@@ -504,9 +530,12 @@ def main(argv=None):
     if args.api:
         check_api(args.api, args.probe_service)
 
-    print_report()
+    repo_info = describe_repo(args.repo)
+    print_report(repo_info)
     if args.json:
-        args.json.write_text(json.dumps([r.__dict__ for r in RESULTS], indent=2), encoding="utf-8")
+        args.json.write_text(json.dumps({"repo": repo_info, "api": args.api,
+                                         "results": [r.__dict__ for r in RESULTS]}, indent=2),
+                             encoding="utf-8")
     return 1 if any(r.status == "FAIL" for r in RESULTS) else 0
 
 
