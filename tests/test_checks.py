@@ -1,5 +1,5 @@
 """
-Tests for drum_review.checks against a small synthetic drum-constants layout,
+Tests for codata_constants_checks.checks against a small synthetic drum-constants layout,
 so they run without a clone of the real repository.
 
 The fixture contains the four 2019-SI defining constants needed for the exact
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from drum_review import checks
+from codata_constants_checks import checks
 
 PREFIXES = """\
 @prefix codata: <https://w3id.org/codata/model/> .

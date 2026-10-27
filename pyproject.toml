@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "drum-review"
+name = "codata-constants-checks"
 version = "0.1.0"
 description = "Reproducible review checks and fixes for the CODATA DRUM Constants repositories"
 readme = "README.md"
@@ -15,7 +15,7 @@ dependencies = ["rdflib>=7.0.0"]
 dev = ["pytest>=7.0.0"]
 
 [project.scripts]
-drum-review-checks = "drum_review.checks:main"
+codata-constants-checks = "codata_constants_checks.checks:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

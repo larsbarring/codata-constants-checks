@@ -9,13 +9,13 @@ run against a running instance of https://github.com/codata/drum-constants-api.
 
 Usage
 -----
-    pip install .            # from the drum-review checkout
+    pip install .            # from the codata-constants-checks checkout
     git clone https://github.com/codata/drum-constants
-    drum-review-checks --repo drum-constants
-    drum-review-checks --repo drum-constants --api http://127.0.0.1:8000
-    drum-review-checks --repo drum-constants --api <base> --probe-service
+    codata-constants-checks --repo drum-constants
+    codata-constants-checks --repo drum-constants --api http://127.0.0.1:8000
+    codata-constants-checks --repo drum-constants --api <base> --probe-service
 
-(`python -m drum_review` is equivalent to `drum-review-checks`.)
+(`python -m codata_constants_checks` is equivalent to `codata-constants-checks`.)
 
 --api is the base URL under which the API serves /constants and /sparql.
 --probe-service sends one SPARQL query containing SERVICE <http://127.0.0.1:1/>
@@ -453,7 +453,7 @@ def check_api(base, probe_service):
     if not probe_service:
         record("A6", "SPARQL SERVICE is refused", "SKIP", "run with --probe-service to test")
         return
-    q = "SELECT * WHERE { SERVICE <http://127.0.0.1:1/drum-review-probe> { ?s ?p ?o } } LIMIT 1"
+    q = "SELECT * WHERE { SERVICE <http://127.0.0.1:1/codata-constants-checks-probe> { ?s ?p ?o } } LIMIT 1"
     s, b = http_get(f"{base}/sparql?query={urllib.parse.quote(q)}",
                     accept="application/sparql-results+json")
     refused = s == 400 and "service" in b.lower()

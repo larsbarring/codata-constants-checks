@@ -1,4 +1,4 @@
-# drum-review
+# codata-constants-checks
 
 Reproducible review checks and proposed fixes for the CODATA DRUM Constants
 repositories:
@@ -13,7 +13,7 @@ Reviewed versions: drum-constants 0.2.0 (`9f13b1b`) and drum-constants-api 0.4.0
 
 | Path | What |
 |---|---|
-| `src/drum_review/checks.py` | `drum-review-checks`: one check per review finding, run against a drum-constants clone and optionally a running API |
+| `src/codata_constants_checks/checks.py` | `codata-constants-checks`: one check per review finding, run against a drum-constants clone and optionally a running API |
 | `patches/drum-constants/0001-*.patch` | Fix for the exact/truncated flags and symbol case in labels, with tests |
 | `tests/` | Tests for the checks, using a small synthetic repository |
 | `wip/correlations/` | Stage 3 prototype (correlation coefficients as RDF). Not packaged, not finished |
@@ -23,9 +23,9 @@ Reviewed versions: drum-constants 0.2.0 (`9f13b1b`) and drum-constants-api 0.4.0
 ```bash
 git clone https://github.com/codata/drum-constants
 pip install .                       # in this directory; needs Python >= 3.10, rdflib >= 7
-drum-review-checks --repo drum-constants
-drum-review-checks --repo drum-constants --api http://127.0.0.1:8000           # also check an API
-drum-review-checks --repo drum-constants --api <base> --probe-service --json results.json
+codata-constants-checks --repo drum-constants
+codata-constants-checks --repo drum-constants --api http://127.0.0.1:8000           # also check an API
+codata-constants-checks --repo drum-constants --api <base> --probe-service --json results.json
 ```
 
 The exit status is 1 if any check fails. `--api` is the base URL under which
@@ -76,7 +76,7 @@ the maintainer privately rather than in a public issue.
 
 ```bash
 cd drum-constants
-git am ../drum-review/patches/drum-constants/0001-*.patch
+git am ../codata-constants-checks/patches/drum-constants/0001-*.patch
 python nist/repackage.py
 python utils/codata_constants.py --norefresh     # uses the committed workbook
 python utils/package.py
@@ -107,7 +107,7 @@ This directory is already a git repository. Create an empty repository on
 GitHub (no README or licence), then:
 
 ```bash
-git remote add origin git@github.com:<user>/drum-review.git
+git remote add origin git@github.com:<user>/codata-constants-checks.git
 git push -u origin main
 ```
 
