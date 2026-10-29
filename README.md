@@ -14,7 +14,7 @@ Reviewed versions: drum-constants 0.2.0 (`9f13b1b`) and drum-constants-api 0.4.0
 | Path | What |
 |---|---|
 | `src/codata_constants_checks/checks.py` | `codata-constants-checks`: one check per review finding, run against a drum-constants clone and optionally a running API |
-| `patches/drum-constants/0001-*.patch`, `0002-*.patch` | Fix for the exact/truncated flags and symbol case in labels (0001); symbol case taken from NIST's names and a test of exactness against the SI history (0002) |
+| `patches/drum-constants/0001-*.patch` … `0003-*.patch` | Fix for the exact/truncated flags and symbol case in labels (0001); symbol case taken from NIST's names and a test of exactness against the SI history (0002); atomic unit of permittivity tested against 4πε0 (0003) |
 | `tests/` | Tests for the checks, using a small synthetic repository |
 | `wip/correlations/` | Stage 3 prototype (correlation coefficients as RDF). Not packaged, not finished |
 
@@ -79,13 +79,13 @@ tests read the generated files, so nothing changes until those are rebuilt:
 
 ```bash
 cd drum-constants
-git am ../codata-constants-checks/patches/drum-constants/000[12]-*.patch
+git am ../codata-constants-checks/patches/drum-constants/000[123]-*.patch
 pip install rdflib openpyxl requests pytest      # generator and test dependencies
 python nist/repackage.py                         # NIST CSVs, now with IsExact/IsTruncated
 python utils/codata_constants.py --norefresh     # uses the committed workbook, not the live Sheet
 python utils/package.py                          # dist/rdf/*
 rm -f nist_ids.csv nist_ids.json                 # stray copies repackage.py writes to the current directory
-python -m pytest tests                           # 34 tests
+python -m pytest tests                           # 42 tests
 codata-constants-checks --repo .
 ```
 

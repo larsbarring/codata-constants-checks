@@ -1,0 +1,81 @@
+From 03dbab6a58d37cca304836bdaa08a9f0ae2814c6 Mon Sep 17 00:00:00 2001
+From: Lars <lars.barring@smhi.se>
+Date: Thu, 29 Oct 2026 11:30:30 +0000
+Subject: [PATCH] Test the atomic unit of permittivity against its definition 4
+ pi eps0
+
+- SI-history test: AtomicUnitOfPermittivity is exact up to CODATA 2014
+  and not exact from CODATA 2018, like eps0.
+- New test: its published value agrees with 4 pi eps0 in every release,
+  so its exactness rests on the definition, not on that of eps0 alone.
+- Test comment: values from 2018 on are "determined by the adjustment"
+  rather than "measured".
+- CHANGELOG: test list updated.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01XHM6qC7Y8rv5syejamGbb9
+---
+ CHANGELOG.md               |  2 +-
+ tests/test_rdf_and_docs.py | 23 ++++++++++++++++++++---
+ 2 files changed, 21 insertions(+), 4 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0960015..98e9cab 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ - `nist/repackage.py` writes `IsExact` and `IsTruncated` columns to `allascii_<year>.csv`.
+ 
+ ### Added
+-- Tests: `isTruncated` and `isExact` agree with the NIST source for every release; the exact derived 2022 constants (R, F, K_J, R_K) are either exactly equal to their defining relation or flagged truncated, and are true truncations; no symbol-case changes in English labels relative to NIST's names; exactness of c, μ0, ε0, Z0, M_u, M(¹²C), h, e, k and N_A follows the SI definitions in force for each release (fixed in the test, independent of NIST's formatting).
++- Tests: `isTruncated` and `isExact` agree with the NIST source for every release; the exact derived 2022 constants (R, F, K_J, R_K) are either exactly equal to their defining relation or flagged truncated, and are true truncations; no symbol-case changes in English labels relative to NIST's names; exactness of c, μ0, ε0, Z0, the atomic unit of permittivity 4πε0, M_u, M(¹²C), h, e, k and N_A follows the SI definitions in force for each release (fixed in the test, independent of NIST's formatting); the published atomic unit of permittivity agrees with 4πε0 in every release.
+ 
+ ## [0.2.0] - 2026-10-20
+ 
+diff --git a/tests/test_rdf_and_docs.py b/tests/test_rdf_and_docs.py
+index e8055f5..5d5c647 100644
+--- a/tests/test_rdf_and_docs.py
++++ b/tests/test_rdf_and_docs.py
+@@ -273,15 +273,17 @@ def test_exact_flags_match_nist_source(graph: rdflib.Graph, year: str):
+ 
+ # Exactness fixed by the SI definitions in force for each adjustment, stated
+ # independently of NIST's table formatting. Up to CODATA 2014 the SI fixed c,
+-# mu0 (ampere, 1948) and M(12C) (mole), and therefore eps0, Z0 and M_u. CODATA
+-# 2018 is the first adjustment in the revised SI (in force 20 May 2019), which
+-# fixes h, e, k and N_A, while mu0, eps0, Z0, M_u and M(12C) become measured.
++# mu0 (ampere, 1948) and M(12C) (mole), and therefore eps0, Z0, 4 pi eps0 and
++# M_u. The 2018 and later adjustments use the revised SI (in force 20 May
++# 2019), which fixes h, e, k and N_A; mu0, eps0, Z0, 4 pi eps0, M_u and M(12C)
++# then have values determined by the adjustment.
+ SI_EXACTNESS = {
+     # constant id: (exact up to 2014, exact from 2018)
+     "SpeedOfLight": (True, True),
+     "ElectromagneticPermeabilityOfVacuum": (True, False),
+     "PermittivityOfVacuum": (True, False),
+     "CharacteristicImpedanceOfVacuum": (True, False),
++    "AtomicUnitOfPermittivity": (True, False),  # defined as 4 pi eps0
+     "MolarMassConstant": (True, False),
+     "MolarMassOfCarbon12": (True, False),
+     "PlanckConstant": (False, True),
+@@ -314,3 +316,18 @@ def test_restore_symbol_case_with_several_or_ambiguous_references():
+     # a token appearing in two cases is ambiguous and left alone
+     assert restore_symbol_case("Thing In T", ("thing in t",)) == "Thing In t"          # control
+     assert restore_symbol_case("Thing In T", ("thing in t", "thing in T")) == "Thing In T"
++
++
++@pytest.mark.parametrize("year", VERSIONS)
++def test_atomic_unit_of_permittivity_is_four_pi_eps0(graph: rdflib.Graph, year: str):
++    """The atomic unit of permittivity is defined as 4 pi eps0; its published value must agree."""
++    auperm = graph.value(CONSTANT[f"AtomicUnitOfPermittivity/{year}"], MODEL.value)
++    eps0 = graph.value(CONSTANT[f"PermittivityOfVacuum/{year}"], MODEL.value)
++    if auperm is None or eps0 is None:
++        pytest.skip(f"no values for {year}")
++    published = Decimal(str(auperm))
++    expected = Decimal(4 * math.pi) * Decimal(str(eps0))
++    # agreement to the precision of the shorter of the two published numerals
++    digits = min(len(Decimal(str(auperm)).as_tuple().digits), len(Decimal(str(eps0)).as_tuple().digits))
++    assert abs(published - expected) / expected < Decimal(10) ** (1 - digits), (
++        f"{year}: auperm {published} vs 4 pi eps0 = {expected}")
+-- 
+2.43.0
+
