@@ -67,10 +67,12 @@ unpatched API 0.4.0 run locally.
 | A3 | `*Decimal` JSON fields use one lexical form | FAIL: 354 scientific, 283 fixed |
 | A4 | Truncated exact values flagged | FAIL: follows D1 (data) |
 | A5 | `unit.name` is a label | WARN: 261 embed the id |
-| A6 | SPARQL `SERVICE` refused | **FAIL: the server makes outbound HTTP requests to caller-supplied URLs** |
+| A6 | SPARQL `SERVICE` refused | FAIL: the server makes outbound HTTP requests to caller-supplied URLs. **Fixed in drum-constants-api 0.4.1 (2026-11-02)** |
 
-A6 is a server-side request forgery issue on a public endpoint. Report it to
-the maintainer privately rather than in a public issue.
+A6 was a server-side request forgery issue on the public `/sparql` endpoint.
+It was reported privately to the maintainer and fixed in drum-constants-api
+0.4.1, which rejects queries containing `SERVICE` with HTTP 400; that release
+has been deployed. Against 0.4.1 or later, A6 should report PASS.
 
 ## Applying the drum-constants patch
 
@@ -108,8 +110,8 @@ diff lines per regeneration.
 2. Fix of flags and labels in drum-constants (patch 0001). **Done.**
 3. Correlation coefficients as RDF (`wip/correlations/`). **Deferred.** The
    vocabulary needs agreement in the DRUM group first.
-4. drum-constants-api fixes: block SPARQL `SERVICE` (A6), validate `?version`
-   (A2), consistent `valueDecimal` (A3). **Next.**
+4. drum-constants-api fixes: block SPARQL `SERVICE` (A6) **done, in 0.4.1**;
+   validate `?version` (A2), consistent `valueDecimal` (A3). **Next.**
 
 ## Publishing this repository
 
